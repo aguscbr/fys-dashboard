@@ -1,0 +1,2 @@
+id_despacho,fecha,pedido_id,cliente,tipo_producto,variante_producto,cantidad,nota,usuario
+1,2026-01-19 20:59:02,1,Oxicar,pincel normal,7 - virola 1,10,,admin
