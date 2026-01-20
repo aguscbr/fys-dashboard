@@ -346,44 +346,161 @@ def page_dashboard():
         pedidos_df = read_df(FILES["pedidos"]).copy()
     except Exception:
         pedidos_df = pd.DataFrame()
+    try:
+        prods_df = read_df(FILES["productos"]).copy()
+    except Exception:
+        prods_df = pd.DataFrame()
+
     st.header("Dashboard Principal")
-    st.caption("Resumen de stock, alertas y evolución histórica")
+    st.caption("Resumen general con filtros por fecha y cliente")
 
-    with st.container():
-        st.subheader("Resumen rápido")
-        resumen_stock_cards(stock)
+    # Filtros globales
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+    with c1:
+        desde = st.date_input("Desde", value=(date.today() - timedelta(days=30)), key="dash_desde")
+    with c2:
+        hasta = st.date_input("Hasta", value=date.today(), key="dash_hasta")
+    with c3:
+        clientes = sorted(pedidos_df["cliente"].dropna().astype(str).unique().tolist()) if not pedidos_df.empty else []
+        cliente_sel = st.selectbox("Cliente", [""] + clientes, index=0)
+    with c4:
+        tipo_mp = st.selectbox("Tipo MP", [""] + sorted(stock["tipo"].dropna().astype(str).unique().tolist()) if not stock.empty else [""], index=0)
 
-    st.markdown("---")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        grafico_barras_stock(stock)
-    with col2:
-        st.subheader("Alertas")
-        alertas_stock_bajo(stock)
+    # Aplicar filtros a copias de datos
+    movs_f = movs.copy()
+    if not movs_f.empty:
+        movs_f["fecha"] = pd.to_datetime(movs_f["fecha"], errors="coerce")
+        movs_f = movs_f[(movs_f["fecha"] >= pd.to_datetime(desde)) & (movs_f["fecha"] <= pd.to_datetime(hasta) + pd.Timedelta(days=1))]
+    pedidos_f = pedidos_df.copy()
+    if not pedidos_f.empty and cliente_sel:
+        pedidos_f = pedidos_f[pedidos_f["cliente"].astype(str) == cliente_sel]
 
-    # Indicadores de pedidos
-    if not pedidos_df.empty and "estado" in pedidos_df.columns:
-        st.markdown("---")
-        st.subheader("Pedidos - Estado y próximos a vencer")
-        counts = pedidos_df["estado"].value_counts()
-        cols = st.columns(5)
-        estados = ["pendiente", "confirmado", "en_produccion", "completado", "cancelado"]
-        for i, est in enumerate(estados):
-            val = int(counts.get(est, 0))
-            with cols[i]:
-                st.metric(est.capitalize(), val)
-        # Próximos 7 días
+    # Tabs de vistas
+    tabs = st.tabs(["Resumen", "Stock MP", "Terminados", "Pedidos", "Producción"])
+
+    # Tab Resumen
+    with tabs[0]:
+        st.subheader("KPIs")
+        cK1, cK2, cK3, cK4 = st.columns(4)
+        total_mp = int(stock["stock_actual"].sum()) if "stock_actual" in stock.columns and not stock.empty else 0
+        total_prod = int(prods_df["stock_actual"].sum()) if not prods_df.empty and "stock_actual" in prods_df.columns else 0
+        pedidos_abiertos = 0
+        if not pedidos_f.empty and "estado" in pedidos_f.columns:
+            pedidos_abiertos = int(pedidos_f[pedidos_f["estado"].isin(["pendiente", "confirmado", "en_produccion"])].shape[0])
+        ult_sem = movs_f[movs_f["tipo_movimiento"].isin(["ENTRADA", "SALIDA"])] if not movs_f.empty else pd.DataFrame()
+        prod_sem = 0
         try:
-            pedidos_df["fecha_entrega"] = pd.to_datetime(pedidos_df["fecha_entrega"], errors="coerce")
-            upcoming = pedidos_df[(pedidos_df["estado"].isin(["pendiente", "confirmado"])) & (pedidos_df["fecha_entrega"] >= pd.Timestamp.today().normalize()) & (pedidos_df["fecha_entrega"] <= pd.Timestamp.today().normalize() + pd.Timedelta(days=7))]
-            if not upcoming.empty:
-                st.dataframe(upcoming[["id", "cliente", "tipo_producto", "variante_producto", "cantidad", "fecha_entrega", "estado"]].sort_values("fecha_entrega"), use_container_width=True)
+            prod_hist = read_df(FILES["produccion"]).copy()
+            if not prod_hist.empty:
+                prod_hist["fecha"] = pd.to_datetime(prod_hist["fecha"], errors="coerce")
+                desde7 = pd.Timestamp.today().normalize() - pd.Timedelta(days=7)
+                prod_sem = int(prod_hist[prod_hist["fecha"] >= desde7]["cantidad"].sum())
         except Exception:
             pass
+        with cK1:
+            st.metric("Stock MP total", total_mp)
+        with cK2:
+            st.metric("Stock terminados", total_prod)
+        with cK3:
+            st.metric("Pedidos abiertos", pedidos_abiertos)
+        with cK4:
+            st.metric("Producido 7 días", prod_sem)
 
-    st.markdown("---")
-    st.subheader("Evolución de stock - 30 días")
-    grafico_evolucion(movs)
+        st.markdown("---")
+        cA, cB = st.columns([2, 1])
+        with cA:
+            st.subheader("Stock por tipo (MP)")
+            grafico_barras_stock(stock if not tipo_mp else stock[stock["tipo"].astype(str) == tipo_mp])
+        with cB:
+            st.subheader("Alertas")
+            alertas_stock_bajo(stock)
+
+    # Tab Stock MP
+    with tabs[1]:
+        st.subheader("Materias Primas")
+        st.caption("Filtre por tipo/variante y revise mínimos y últimas entradas")
+        tipo_opt = st.selectbox("Tipo", [""] + sorted(stock["tipo"].astype(str).unique().tolist()) if not stock.empty else [""], index=0, key="tabmp_tipo")
+        var_opt = ""
+        if tipo_opt:
+            vs = sorted(stock[stock["tipo"].astype(str) == tipo_opt]["variante"].astype(str).unique().tolist())
+            var_opt = st.selectbox("Variante", [""] + vs, index=0, key="tabmp_var")
+        df_mp = stock.copy()
+        if tipo_opt:
+            df_mp = df_mp[df_mp["tipo"].astype(str) == tipo_opt]
+        if var_opt:
+            df_mp = df_mp[df_mp["variante"].astype(str) == var_opt]
+        st.dataframe(df_mp.sort_values(["tipo", "variante"]).reset_index(drop=True), use_container_width=True)
+
+    # Tab Terminados
+    with tabs[2]:
+        st.subheader("Productos Terminados")
+        if prods_df.empty:
+            st.info("Sin productos terminados registrados.")
+        else:
+            tsel = st.selectbox("Tipo producto", [""] + sorted(prods_df["tipo_producto"].astype(str).unique().tolist()), index=0, key="tabprod_tipo")
+            vsel = ""
+            if tsel:
+                vsel = st.selectbox("Variante", [""] + sorted(prods_df[prods_df["tipo_producto"].astype(str) == tsel]["variante_producto"].astype(str).unique().tolist()), index=0, key="tabprod_var")
+            dfp = prods_df.copy()
+            if tsel:
+                dfp = dfp[dfp["tipo_producto"].astype(str) == tsel]
+            if vsel:
+                dfp = dfp[dfp["variante_producto"].astype(str) == vsel]
+            st.dataframe(dfp.sort_values(["tipo_producto", "variante_producto"]).reset_index(drop=True), use_container_width=True)
+
+    # Tab Pedidos
+    with tabs[3]:
+        st.subheader("Pedidos")
+        if pedidos_f.empty:
+            st.info("Sin pedidos para los filtros actuales.")
+        else:
+            ests = ["", "pendiente", "confirmado", "en_produccion", "completado", "cancelado"]
+            est_sel = st.selectbox("Estado", ests, index=0, key="tabped_est")
+            tipo_sel = st.selectbox("Tipo", [""] + sorted(pedidos_f["tipo_producto"].astype(str).unique().tolist()), index=0, key="tabped_tipo")
+            dfpeds = pedidos_f.copy()
+            if est_sel:
+                dfpeds = dfpeds[dfpeds["estado"] == est_sel]
+            if tipo_sel:
+                dfpeds = dfpeds[dfpeds["tipo_producto"].astype(str) == tipo_sel]
+            # KPIs de pedidos
+            cpa, cpb, cpc = st.columns(3)
+            with cpa:
+                st.metric("Tot. pedidos", int(dfpeds.shape[0]))
+            with cpb:
+                atras = 0
+                try:
+                    dfpeds["fecha_entrega"] = pd.to_datetime(dfpeds["fecha_entrega"], errors="coerce")
+                    atras = int(dfpeds[(dfpeds["estado"].isin(["pendiente", "confirmado"])) & (dfpeds["fecha_entrega"] < pd.Timestamp.today().normalize())].shape[0])
+                except Exception:
+                    pass
+                st.metric("Vencidos", atras)
+            with cpc:
+                prox7 = 0
+                try:
+                    prox7 = int(dfpeds[(dfpeds["estado"].isin(["pendiente", "confirmado"])) & (dfpeds["fecha_entrega"] >= pd.Timestamp.today().normalize()) & (dfpeds["fecha_entrega"] <= pd.Timestamp.today().normalize() + pd.Timedelta(days=7))].shape[0])
+                except Exception:
+                    pass
+                st.metric("Vencen 7 días", prox7)
+            st.dataframe(dfpeds.sort_values(["estado", "fecha_entrega"], na_position="last"), use_container_width=True)
+
+    # Tab Producción
+    with tabs[4]:
+        st.subheader("Producción")
+        try:
+            prod_hist = read_df(FILES["produccion"]).copy()
+        except Exception:
+            prod_hist = pd.DataFrame()
+        if prod_hist.empty:
+            st.info("Sin registros de producción.")
+        else:
+            prod_hist["fecha"] = pd.to_datetime(prod_hist["fecha"], errors="coerce")
+            d_ini = pd.to_datetime(desde)
+            d_fin = pd.to_datetime(hasta) + pd.Timedelta(days=1)
+            prod_f = prod_hist[(prod_hist["fecha"] >= d_ini) & (prod_hist["fecha"] <= d_fin)]
+            tsel = st.selectbox("Tipo producto", [""] + sorted(prod_f["tipo_producto"].dropna().astype(str).unique().tolist()), index=0, key="tabprod2_tipo")
+            if tsel:
+                prod_f = prod_f[prod_f["tipo_producto"].astype(str) == tsel]
+            st.dataframe(prod_f.sort_values("fecha", ascending=False), use_container_width=True)
 
 
 def page_entradas():

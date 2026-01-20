@@ -1,5 +1,1 @@
 fecha,tipo_movimiento,tipo,variante,cantidad,proveedor,documento,observaciones,usuario
-2026-01-19 20:57:32,ENTRADA,Mango,7 - virola 1,10,nan,nan,nan,admin
-2026-01-19 20:57:41,ENTRADA,Chapita,7,10,nan,nan,nan,admin
-2026-01-19 20:58:36,SALIDA,Mango,7 - virola 1,10,nan,nan,Producción desde pedido 1,admin
-2026-01-19 20:58:36,SALIDA,Chapita,7,10,,,Producción desde pedido 1,admin
